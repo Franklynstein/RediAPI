@@ -5,8 +5,10 @@ const fetch = require('node-fetch');
 
 const app = express();
 app.use(express.json());
-const PORT = 3001;
+app.use(cors());
 
+const PORT = process.env.PORT || 3001;
+const UPSTREAM_BASE = 'https://rediprofiles.com/api/v1';
 const API_KEY = process.env.REDIPROFILES_API_KEY;
 
 if (!API_KEY) {
@@ -14,50 +16,63 @@ if (!API_KEY) {
   process.exit(1);
 }
 
-// Enable CORS for the frontend
-app.use(cors());
+const ALLOWED_METHODS = new Set(['GET', 'POST', 'PATCH', 'DELETE']);
 
-app.get('/api/services', async (req, res) => {
-  try {
-    const response = await fetch('https://api.rediprofiles.com/api/v1/services/', {
-      headers: {
-        'X-API-KEY': API_KEY
-      }
-    });
+// Only allow documented path prefixes through the proxy.
+const ALLOWED_PREFIXES = [
+  /^\/profiles\/?$/,
+  /^\/profiles\/balance\/?$/,
+  /^\/keys\/?$/,
+  /^\/keys\/\d+\/?$/,
+  /^\/services\/?$/,
+  /^\/services\/\d+\/?$/,
+  /^\/orders\/?$/,
+  /^\/orders\/[^/]+\/?$/,
+  /^\/api-orders\/?$/,
+  /^\/api-orders\/[^/]+\/?$/,
+  /^\/auth\/token\/?$/,
+  /^\/auth\/token\/refresh\/?$/,
+];
 
-    if (!response.ok) {
-      throw new Error(`API responded with status: ${response.status}`);
-    }
+function isPathAllowed(path) {
+  return ALLOWED_PREFIXES.some(re => re.test(path));
+}
 
-    const data = await response.json();
-    res.json(data);
-  } catch (error) {
-    console.error('Error fetching from API:', error);
-    res.status(500).json({ error: error.message });
+app.all('/api/v1/*splat', async (req, res) => {
+  if (!ALLOWED_METHODS.has(req.method)) {
+    return res.status(405).json({ error: `Method ${req.method} not allowed` });
   }
-});
 
-app.post('/api/orders', async (req, res) => {
+  const subPath = req.originalUrl.replace(/^\/api\/v1/, '').split('?')[0];
+  if (!isPathAllowed(subPath)) {
+    return res.status(404).json({ error: 'Unknown endpoint' });
+  }
+
+  const upstreamUrl = `${UPSTREAM_BASE}${req.originalUrl.replace(/^\/api\/v1/, '')}`;
+  const hasBody = req.method !== 'GET' && req.method !== 'DELETE';
+
   try {
-    const response = await fetch('https://api.rediprofiles.com/api/v1/orders/', {
-      method: 'POST',
+    const upstream = await fetch(upstreamUrl, {
+      method: req.method,
       headers: {
         'X-API-KEY': API_KEY,
-        'Content-Type': 'application/json'
+        ...(hasBody ? { 'Content-Type': 'application/json' } : {}),
       },
-      body: JSON.stringify(req.body)
+      body: hasBody ? JSON.stringify(req.body ?? {}) : undefined,
     });
 
-    if (!response.ok) {
-      const errorBody = await response.json().catch(() => ({}));
-      throw new Error(errorBody.detail || `API responded with status: ${response.status}`);
-    }
+    // Propagate rate-limit signal if upstream sent it
+    const retryAfter = upstream.headers.get('retry-after');
+    if (retryAfter) res.set('Retry-After', retryAfter);
 
-    const data = await response.json();
-    res.json(data);
+    if (upstream.status === 204) return res.status(204).end();
+
+    const text = await upstream.text();
+    const contentType = upstream.headers.get('content-type') || 'application/json';
+    res.status(upstream.status).type(contentType).send(text);
   } catch (error) {
-    console.error('Error placing order to API:', error);
-    res.status(500).json({ error: error.message });
+    console.error(`[proxy] ${req.method} ${upstreamUrl} failed:`, error);
+    res.status(502).json({ error: 'Upstream request failed', detail: error.message });
   }
 });
 

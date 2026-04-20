@@ -13,9 +13,9 @@
     "vite": "^4.0.0"
   },
   "scripts": {
-    "dev": "vite",
+    "dev": "node api.js && vite",
     "proxy": "node server.js",
-    "build": "vite build",
+    "build": "node api.js && vite build",
     "preview": "vite preview"
   }
 }

@@ -1,102 +1,42 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import './App.css'
+import Balance from './components/Balance'
+import Services from './components/Services'
+import Orders from './components/Orders'
 
-function App() {
-  const [services, setServices] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(null)
-  const [orderResult, setOrderResult] = useState(null)
-  const [ordering, setOrdering] = useState(false)
-  const [orderError, setOrderError] = useState(null)
+export default function App() {
+  const [view, setView] = useState('services')
+  const [refreshKey, setRefreshKey] = useState(0)
 
-  useEffect(() => {
-    // Fetch services from local proxy server
-    fetch('http://localhost:3001/api/services')
-      .then(response => {
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`)
-        }
-        return response.json()
-      })
-      .then(data => {
-        setServices(data)
-        setLoading(false)
-      })
-      .catch(error => {
-        console.error('Error fetching services:', error)
-        setError(error.message)
-        setLoading(false)
-      })
-  }, [])
-
-  const placeOrder = async serviceId => {
-    setOrdering(true)
-    setOrderError(null)
-    setOrderResult(null)
-
-    try {
-      const response = await fetch('http://localhost:3001/api/orders', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ service_id: serviceId, quantity: 1 })
-      })
-
-      if (!response.ok) {
-        const body = await response.json()
-        throw new Error(body.error || `HTTP error! status: ${response.status}`)
-      }
-
-      const data = await response.json()
-      setOrderResult(data)
-    } catch (error) {
-      console.error('Error placing order:', error)
-      setOrderError(error.message)
-    } finally {
-      setOrdering(false)
-    }
-  }
-
-  if (loading) {
-    return <div className="loading">Loading services...</div>
-  }
-
-  if (error) {
-    return <div className="error">Error: {error}</div>
-  }
+  const handleOrderPlaced = () => setRefreshKey(k => k + 1)
 
   return (
     <div className="App">
       <header>
-        {orderResult && (
-          <div className="order-success">
-            Order placed: <strong>{orderResult.sqid || orderResult.id}</strong> - {orderResult.status}
-          </div>
-        )}
-        {orderError && <div className="order-error">Order error: {orderError}</div>}
-        <h1>Rediprofiles - Social Media Accounts</h1>
+        <div className="header-inner">
+          <h1>Rediprofiles</h1>
+          <Balance refreshKey={refreshKey} />
+        </div>
+        <nav className="tabs">
+          <button
+            className={view === 'services' ? 'tab active' : 'tab'}
+            onClick={() => setView('services')}
+          >
+            Services
+          </button>
+          <button
+            className={view === 'orders' ? 'tab active' : 'tab'}
+            onClick={() => setView('orders')}
+          >
+            Orders
+          </button>
+        </nav>
       </header>
       <main>
-        <div className="services-grid">
-          {services.map(service => (
-            <div key={service.id} className="service-card">
-              <h2>{service.name}</h2>
-              <p className="price">Price: ₦{service.final_price}</p>
-              <p className="stock">In Stock: {service.quantity_in_stock}</p>
-              <button
-                className="buy-button"
-                onClick={() => placeOrder(service.id)}
-                disabled={ordering}
-              >
-                {ordering ? 'Purchasing…' : 'Purchase'}
-              </button>
-            </div>
-          ))}
-        </div>
+        {view === 'services'
+          ? <Services onOrderPlaced={handleOrderPlaced} />
+          : <Orders refreshKey={refreshKey} />}
       </main>
     </div>
   )
 }
-
-export default App
